@@ -18,6 +18,9 @@ class ResponseTimeMonitor
 
   implicit val logging = new AkkaLogging(context.system.log)
 
+  def getAggregateAR(action: ExecutableWhiskAction): Option[Long] = aggregateAR.get(action)
+  def getAggregateRT(action: ExecutableWhiskAction): Option[Double] = aggregateRT.get(action)
+
   override def receive: Receive = {
 
     case raMsg: RequestArrival =>
@@ -29,12 +32,17 @@ class ResponseTimeMonitor
       }
 
     case rtMsg: ResponseTime =>
-      aggregateRT.get(rtMsg.action) match {
-        case Some(actualRT) =>
-          var newRT = actualRT + rtMsg.rt
-          aggregateRT(rtMsg.action) = newRT
+      aggregateAR.get(rtMsg.action) match {
+        case Some (currentNRequests) =>
+          aggregateRT.get (rtMsg.action) match {
+            case Some(actualRT) =>
+              var newRT = (actualRT * (currentNRequests - 1) + rtMsg.rt) / currentNRequests
+              aggregateRT(rtMsg.action) = newRT
+            case None =>
+              aggregateRT + (rtMsg.action -> rtMsg.rt)
+          }
         case None =>
-          aggregateRT + (rtMsg.action -> rtMsg.rt)
+          //TODO if all request arrivals are logged, there must be at least one when a response time msg arrives
       }
   }
 
