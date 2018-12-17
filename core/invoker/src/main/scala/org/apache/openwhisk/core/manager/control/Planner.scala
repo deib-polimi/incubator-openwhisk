@@ -1,4 +1,4 @@
-package org.apache.openwhisk.core.control
+package org.apache.openwhisk.core.manager.control
 
 import akka.actor.Actor
 import org.apache.openwhisk.core.containerpool.Run
