@@ -1,9 +1,13 @@
 package org.apache.openwhisk.core.manager.control
 
 import akka.actor.Actor
-import org.apache.openwhisk.core.containerpool.Run
+import org.apache.openwhisk.core.manager.monitoring.ResponseTimeMonitor
 
 class Planner extends Actor {
+
+  // contains the aggregated metrics (request arrival count, response time)
+  // at each control iteration, the method reset(action) should be called
+  val RTMonitor = ResponseTimeMonitor
 
   // to be read from conf
   private val MAX_CONTAINERS = 100f
