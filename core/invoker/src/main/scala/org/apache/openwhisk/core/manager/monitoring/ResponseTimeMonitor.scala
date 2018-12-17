@@ -13,38 +13,39 @@ class ResponseTimeMonitor
   case class ResponseTime(action: ExecutableWhiskAction, rt: Double)
 
 
-  var aggregateAR = immutable.Map.empty[ExecutableWhiskAction, Long]
+  var arrivalCount = immutable.Map.empty[ExecutableWhiskAction, Long]
   var aggregateRT = immutable.Map.empty[ExecutableWhiskAction, Double]
 
   implicit val logging = new AkkaLogging(context.system.log)
 
-  def getAggregateAR(action: ExecutableWhiskAction): Option[Long] = aggregateAR.get(action)
+  def getArrivalCount(action: ExecutableWhiskAction): Option[Long] = arrivalCount.get(action)
   def getAggregateRT(action: ExecutableWhiskAction): Option[Double] = aggregateRT.get(action)
 
   override def receive: Receive = {
 
     case raMsg: RequestArrival =>
-      aggregateAR.get(raMsg.action) match {
+      arrivalCount.get(raMsg.action) match {
         case Some(currentNRequests) =>
-          aggregateAR(raMsg.action) = currentNRequests + 1
+          arrivalCount(raMsg.action) = currentNRequests + 1
         case None =>
-          aggregateAR + (raMsg.action -> 1)
+          arrivalCount + (raMsg.action -> 1)
       }
 
     case rtMsg: ResponseTime =>
-      aggregateAR.get(rtMsg.action) match {
-        case Some (currentNRequests) =>
+      arrivalCount.get(rtMsg.action) match {
+        case Some (currentCount) =>
           aggregateRT.get (rtMsg.action) match {
             case Some(actualRT) =>
-              var newRT = (actualRT * (currentNRequests - 1) + rtMsg.rt) / currentNRequests
+              var newRT = (actualRT * (currentCount - 1) + rtMsg.rt) / currentCount
               aggregateRT(rtMsg.action) = newRT
             case None =>
               aggregateRT + (rtMsg.action -> rtMsg.rt)
           }
         case None =>
-          //TODO if all request arrivals are logged, there must be at least one when a response time msg arrives
+          //TODO if all request arrivals are accounted for, there must be at least one when a response time msg arrives
+          logging.error(
+            this,
+            s"aggregated response time for ${rtMsg.action} can not be calculated because arrival count is None")
       }
   }
-
-
 }
