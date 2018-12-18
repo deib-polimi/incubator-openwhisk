@@ -38,7 +38,7 @@ import org.apache.openwhisk.core.{ConfigKeys, WhiskConfig}
 import org.apache.openwhisk.http.Messages
 import org.apache.openwhisk.spi.SpiLoader
 import org.apache.openwhisk.core.database.UserContext
-import org.apache.openwhisk.core.manager.monitoring.{RequestArrival, ResponseTimeMonitor}
+import org.apache.openwhisk.core.manager.monitoring.{RequestArrival, ResponseArrival, ResponseTimeMonitor}
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -145,6 +145,7 @@ class InvokerReactive(
       val msg = if (isSlotFree) {
         val aid = res.fold(identity, _.activationId)
         val isWhiskSystemError = res.fold(_ => false, _.response.isWhiskError)
+        rtMonitor ! ResponseArrival(tid)
         CompletionMessage(transid, aid, isWhiskSystemError, instance)
       } else {
         ResultMessage(transid, res)
