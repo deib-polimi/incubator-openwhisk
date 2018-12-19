@@ -1,13 +1,13 @@
 package org.apache.openwhisk.core.manager.control
 
-import akka.actor.Actor
-import org.apache.openwhisk.core.manager.monitoring.ResponseTimeMonitor
+import scala.collection.immutable
+import akka.actor.{Actor, ActorRef, Props}
+import org.apache.openwhisk.core.entity.ExecutableWhiskAction
 
-class Planner extends Actor {
+case class RTMetrics(metrics: immutable.Map[ExecutableWhiskAction,(Float,Long)])
 
-  // contains the aggregated metrics (request arrival count, response time)
-  // at each control iteration, the method reset(action) should be called
-  val RTMonitor = ResponseTimeMonitor
+class Planner(responseTimeMonitor: ActorRef)
+  extends Actor {
 
   // to be read from conf
   private val MAX_CONTAINERS = 100f
@@ -27,15 +27,19 @@ class Planner extends Actor {
   private var uiOld = 0.0f
 
   override def receive: Receive = {
-    case "all" =>
-      println("All")
+    case rtMsg: RTMetrics =>
+      handleRTMetrics(rtMsg.metrics)
   }
 
-  def nextResourceAllocation(): Float = {
+  def handleRTMetrics(rtMetrics: immutable.Map[ExecutableWhiskAction, (Float,Long)]) : Unit = {
+    // read data from monitoring for each function
+    for ((k, (rt, req)) <- rtMetrics) {
+      val fCTNs = nextResourceAllocation(rt,req)
+      
+    }
+  }
 
-    // read data from monitoring
-    val rt = 0.1f  // response time
-    val req = 100f // number of request
+  def nextResourceAllocation(rt: Float, req: Long): Float = {
 
     val e = SLA - rt // error
     val ke = (A - 1) / (P_NOM - 1) * e // proportional contribution
@@ -53,6 +57,8 @@ class Planner extends Actor {
 
     approxCore // return cores
   }
+}
 
-
+object Planner{
+  def props(rtMonitor: ActorRef) = Props(new Planner(rtMonitor))
 }

@@ -8,6 +8,8 @@ import scala.collection.mutable
 
 case class RequestArrival(action: ExecutableWhiskAction, tid: TransactionId)
 case class ResponseArrival(tid: TransactionId)
+case class RequestArrivalCount(action: ExecutableWhiskAction, count: Option[Long])
+case class ResponseTimeAverage(action: ExecutableWhiskAction, average: Option[Double])
 
 class ResponseTimeMonitor
   extends Actor {
@@ -27,12 +29,17 @@ class ResponseTimeMonitor
   }
 
   override def receive: Receive = {
-
     case rqMsg: RequestArrival =>
       handleRequestArrival(rqMsg)
 
     case rsMsg: ResponseArrival =>
       handleResponseArrival(rsMsg)
+
+    case raMsg: RequestArrivalCount =>
+      sender ! RequestArrivalCount(raMsg.action, getArrivalCount(raMsg.action))
+
+    case rtMsg: ResponseTimeAverage =>
+      sender ! ResponseTimeAverage(rtMsg.action, getAggregateRT(rtMsg.action))
   }
 
   def handleRequestArrival(rqMsg : RequestArrival) : Unit = {

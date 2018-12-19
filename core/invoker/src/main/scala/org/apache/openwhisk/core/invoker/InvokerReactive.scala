@@ -38,6 +38,7 @@ import org.apache.openwhisk.core.{ConfigKeys, WhiskConfig}
 import org.apache.openwhisk.http.Messages
 import org.apache.openwhisk.spi.SpiLoader
 import org.apache.openwhisk.core.database.UserContext
+import org.apache.openwhisk.core.manager.control.Planner
 import org.apache.openwhisk.core.manager.monitoring.{RequestArrival, ResponseArrival, ResponseTimeMonitor}
 
 import scala.concurrent.duration._
@@ -145,7 +146,7 @@ class InvokerReactive(
       val msg = if (isSlotFree) {
         val aid = res.fold(identity, _.activationId)
         val isWhiskSystemError = res.fold(_ => false, _.response.isWhiskError)
-        rtMonitor ! ResponseArrival(tid)
+        rtMonitor ! ResponseArrival(tid) //TODO Danilo's monitor been called here with the transaction id
         CompletionMessage(transid, aid, isWhiskSystemError, instance)
       } else {
         ResultMessage(transid, res)
@@ -200,6 +201,9 @@ class InvokerReactive(
 
   private val rtMonitor =
     actorSystem.actorOf(ResponseTimeMonitor.props)
+
+  private val rtPlanner =
+    actorSystem.actorOf(Planner.props(rtMonitor))
 
   /** Is called when an ActivationMessage is read from Kafka */
   def processActivationMessage(bytes: Array[Byte]): Future[Unit] = {
