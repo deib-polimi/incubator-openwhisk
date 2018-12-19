@@ -17,12 +17,18 @@ class Planner {
 
   // past integral contribution
   private var uiOld = 0.0f
+  private var req = 0.0f
+  private var ke = 0.0f
 
   def nextResourceAllocation(rt: Float, req: Long): Float = {
 
     if (rt > 0 || req > 0) {
+
       val e = SLA - rt // error
-      val ke = (A - 1) / (P_NOM - 1) * e // proportional contribution
+
+      this.req = req
+      this.ke = (A - 1) / (P_NOM - 1) * e // proportional contribution
+
       val ui = uiOld + (1 - P_NOM) * ke // integral contribution (starts from zero)
       val ut = ui + ke // PI contribution
 
@@ -30,14 +36,17 @@ class Planner {
 
       val approxCore: Float = Math.ceil(Math.min(MAX_CONTAINERS, Math.max(core, MIN_CONTAINERS))).toFloat // anti wind-up
 
-      val approxUt = ((1000.0f * A2_NOM + A1_NOM) * req +
-        1000.0f * A1_NOM * A3_NOM * approxCore) / (req + 1000.0f * A3_NOM * approxCore) // recompute PI contribution
-
-      uiOld = approxUt - ke // update integral contribution
-
       approxCore // return cores
     }
     else 0.0f
+  }
+
+  def updateState(allocatedCore: Float): Unit = {
+
+    val approxUt = ((1000.0f * A2_NOM + A1_NOM) * req +
+      1000.0f * A1_NOM * A3_NOM * allocatedCore) / (req + 1000.0f * A3_NOM * allocatedCore) // recompute PI contribution
+
+    uiOld = approxUt - ke // update integral contribution
   }
 }
 

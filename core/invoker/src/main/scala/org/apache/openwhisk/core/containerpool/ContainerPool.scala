@@ -93,8 +93,8 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
       akka.event.Logging.InfoLevel)
   }
 
-  var idealAllocation = immutable.Map.empty[ExecutableWhiskAction, Int]
-  var actualAllocation = immutable.Map.empty[ExecutableWhiskAction, Int]
+  var idealAllocation = immutable.Map.empty[ExecutableWhiskAction, Float]
+  var actualAllocation = immutable.Map.empty[ExecutableWhiskAction, Float]
 
   def isLimitAchieved(action: ExecutableWhiskAction): Boolean = {
     idealAllocation.get(action) match {
@@ -156,7 +156,7 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
                   .removeWithinLimits(
                       freePool,
                       Math.min(r.action.limits.memory.megabytes, memoryConsumptionOf(freePool)).MB,
-                      actualAllocation, idealAllocation)
+                      idealAllocation, actualAllocation)
                   .map(removeContainer)
                   // If the list had at least one entry, enough containers were removed to start the new container. After
                   // removing the containers, we are not interested anymore in the containers that have been removed.
@@ -381,8 +381,8 @@ object ContainerPool {
   }
 
   protected[containerpool] def removeWithinLimits[A](pool: Map[A, ContainerData], memory: ByteSize,
-                                                     idealAllocation: Map[ExecutableWhiskAction, Int],
-                                                     actualAllocation: Map[ExecutableWhiskAction, Int]): List[A] = {
+                                                     idealAllocation: Map[ExecutableWhiskAction, Float],
+                                                     actualAllocation: Map[ExecutableWhiskAction, Float]): List[A] = {
     // Try to find a Free container that does NOT have any active activations AND is initialized with any OTHER action
     var freeEligibleContainers = pool.collect {
       // Only warm containers will be removed. Prewarmed containers will stay always.
