@@ -5,6 +5,7 @@ import akka.actor.{Actor, ActorRef, Props}
 import org.apache.openwhisk.core.entity.ExecutableWhiskAction
 
 case class RTMetrics(metrics: immutable.Map[ExecutableWhiskAction,(Float,Long)])
+case class AllocationUpdate(allocation: immutable.Map[ExecutableWhiskAction, Int])
 
 class Planner(responseTimeMonitor: ActorRef, ctnPool: ActorRef)
   extends Actor {
