@@ -94,9 +94,9 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
   }
 
   var idealAllocation = immutable.Map.empty[ExecutableWhiskAction, Int]
-  var actualAllocation = immutable.Map.empty[ExecutableWhiskAction, Int]
+  //var actualAllocation = immutable.Map.empty[ExecutableWhiskAction, Int]
 
-  def isLimitAchieved(action: ExecutableWhiskAction): Boolean = {
+  private def isLimitAchieved(action: ExecutableWhiskAction): Boolean = {
     idealAllocation.get(action) match {
       case Some(idealNCTN) =>
         actualAllocation.get(action) match {
@@ -107,6 +107,33 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
         }
       case None =>
         false
+    }
+  }
+
+  private def handleActuation[A](pool: Map[A, ContainerData], memory: ByteSize,
+                               idealAllocation: Map[ExecutableWhiskAction, Int],
+                               actualAllocation: Map[ExecutableWhiskAction, Int]) = {
+
+    while(!isActualTheIdeal){
+      ContainerPool.removeWithinLimits(freePool, Math.min(r.action.limits.memory.megabytes, memoryConsumptionOf(freePool)).MB, actualAllocation, idealAllocation)
+    }
+  }
+
+  private def actualAllocation(action: ExecutableWhiskAction): Float = {
+    var count = 0f
+    for((action, data) <- (freePool ++ busyPool)){
+      //if action.equals()
+    }
+  }
+
+  private def isActualTheIdeal: Boolean = {
+    for((action, ideal) <- idealAllocation){
+      actualAllocation.get(action) match {
+        case Some(actual) =>
+          actual != ideal
+        case None =>
+          false
+      }
     }
   }
 
