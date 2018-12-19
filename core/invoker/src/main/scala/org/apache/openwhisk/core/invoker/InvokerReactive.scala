@@ -203,7 +203,7 @@ class InvokerReactive(
     actorSystem.actorOf(ResponseTimeMonitor.props)
 
   private val rtPlanner =
-    actorSystem.actorOf(Planner.props(rtMonitor))
+    actorSystem.actorOf(Planner.props(rtMonitor, pool))
 
   /** Is called when an ActivationMessage is read from Kafka */
   def processActivationMessage(bytes: Array[Byte]): Future[Unit] = {
