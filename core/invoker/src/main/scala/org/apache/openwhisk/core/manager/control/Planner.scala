@@ -6,7 +6,7 @@ import org.apache.openwhisk.core.entity.ExecutableWhiskAction
 
 case class RTMetrics(metrics: immutable.Map[ExecutableWhiskAction,(Float,Long)])
 
-class Planner(responseTimeMonitor: ActorRef)
+class Planner(responseTimeMonitor: ActorRef, ctnPool: ActorRef)
   extends Actor {
 
   // to be read from conf
@@ -35,8 +35,9 @@ class Planner(responseTimeMonitor: ActorRef)
     // read data from monitoring for each function
     for ((k, (rt, req)) <- rtMetrics) {
       val fCTNs = nextResourceAllocation(rt,req)
-      
+      //TODO aggregate f,fCTNs in a map
     }
+    //TODO ctnPool ! AllocationUpdate(allocation)
   }
 
   def nextResourceAllocation(rt: Float, req: Long): Float = {
@@ -60,5 +61,5 @@ class Planner(responseTimeMonitor: ActorRef)
 }
 
 object Planner{
-  def props(rtMonitor: ActorRef) = Props(new Planner(rtMonitor))
+  def props(rtMonitor: ActorRef, ctnPool: ActorRef) = Props(new Planner(rtMonitor, ctnPool))
 }
