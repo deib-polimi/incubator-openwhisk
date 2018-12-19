@@ -25,6 +25,7 @@ import org.apache.openwhisk.core.entity.size._
 import org.apache.openwhisk.core.manager.control.AllocationUpdate
 
 import scala.collection.immutable
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration._
 import scala.util.Try
 
@@ -96,44 +97,65 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
   var idealAllocation = immutable.Map.empty[ExecutableWhiskAction, Int]
   //var actualAllocation = immutable.Map.empty[ExecutableWhiskAction, Int]
 
+  private def handleActuation[A]() = {
+    val toBeRemoved = idealAllocation filter {
+      case (action, ideal) =>
+        getActualAllocationForAction(action) > ideal
+    }
+    for((action, ideal) <- toBeRemoved) {
+      val actual = getActualAllocationForAction(action)
+      ContainerPool.removeFromAction(
+        action,
+        freePool,
+        actual.toInt - ideal.toInt)
+        .map(removeContainer)
+        // If the list had at least one entry, enough containers were removed to start the new container. After
+        // removing the containers, we are not interested anymore in the containers that have been removed.
+        .headOption
+        .map(_ =>
+          takePrewarmContainer(action)
+            .map(container => (container, "recreatedPrewarm"))
+            .getOrElse(createContainer(action.limits.memory.megabytes.MB), "recreated"))
+    }
+    val toBeCreated = idealAllocation collect {
+      case (action, ideal) =>
+        getActualAllocationForAction(action) < ideal
+    }
+    for((action, ideal) <- toBeRemoved) {
+      val actual = getActualAllocationForAction(action)
+      val nToCreate = ideal - actual
+      //TODO attempt to create nToCreate CTNs here
+    }
+  }
+
+  private def getActualAllocation(): immutable.Map[ExecutableWhiskAction, Float] = {
+    var actualAllocation = immutable.Map.empty[ExecutableWhiskAction, Float]
+    for((action, ideal) <- idealAllocation){
+      val actual = getActualAllocationForAction(action)
+      actualAllocation += action -> actual
+    }
+    actualAllocation
+  }
+
+  private def getActualAllocationForAction(targetAction: ExecutableWhiskAction): Float = {
+    var count = 0f
+    for((cp, data) <- (freePool ++ busyPool)){
+      data match {
+        case r: WarmedData =>
+          if(r.action.equals(targetAction))
+            count += 1
+        case _ =>
+      }
+    }
+    count
+  }
+
   private def isLimitAchieved(action: ExecutableWhiskAction): Boolean = {
     idealAllocation.get(action) match {
-      case Some(idealNCTN) =>
-        actualAllocation.get(action) match {
-          case Some(actualNCTN) =>
-            idealNCTN == actualNCTN
-          case None =>
-            false
-        }
+      case Some(ideal) =>
+        getActualAllocationForAction(action) == ideal
       case None =>
-        false
-    }
-  }
-
-  private def handleActuation[A](pool: Map[A, ContainerData], memory: ByteSize,
-                               idealAllocation: Map[ExecutableWhiskAction, Int],
-                               actualAllocation: Map[ExecutableWhiskAction, Int]) = {
-
-    while(!isActualTheIdeal){
-      ContainerPool.removeWithinLimits(freePool, Math.min(r.action.limits.memory.megabytes, memoryConsumptionOf(freePool)).MB, actualAllocation, idealAllocation)
-    }
-  }
-
-  private def actualAllocation(action: ExecutableWhiskAction): Float = {
-    var count = 0f
-    for((action, data) <- (freePool ++ busyPool)){
-      //if action.equals()
-    }
-  }
-
-  private def isActualTheIdeal: Boolean = {
-    for((action, ideal) <- idealAllocation){
-      actualAllocation.get(action) match {
-        case Some(actual) =>
-          actual != ideal
-        case None =>
-          false
-      }
+        true //TODO no ideal, any ideal?
     }
   }
 
@@ -142,7 +164,9 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
     //TODO updates the ideal allocation, but does nothing immediately; actual creation/removal still event based
     //TODO to reflect the control period, actuation should be immediate, right?
     case m: AllocationUpdate =>
-        idealAllocation = m.allocation
+      handleActuation()
+      //TODO remember: the actual may result different from ideal if not all ctns could be created/removed
+      sender ! AllocationUpdate(getActualAllocation())
 
     // A job to run on a container
     //
@@ -179,11 +203,10 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
                 // Remove a container and create a new one for the given job
                 ContainerPool
                 // Only free up the amount, that is really needed to free up
-                  //TODO calling our function
-                  .removeWithinLimits(
+                  //TODO should not call remove anymore
+                  .remove(
                       freePool,
-                      Math.min(r.action.limits.memory.megabytes, memoryConsumptionOf(freePool)).MB,
-                      actualAllocation, idealAllocation)
+                      Math.min(r.action.limits.memory.megabytes, memoryConsumptionOf(freePool)).MB)
                   .map(removeContainer)
                   // If the list had at least one entry, enough containers were removed to start the new container. After
                   // removing the containers, we are not interested anymore in the containers that have been removed.
@@ -407,30 +430,21 @@ object ContainerPool {
     }
   }
 
-  protected[containerpool] def removeWithinLimits[A](pool: Map[A, ContainerData], memory: ByteSize,
-                                                     idealAllocation: Map[ExecutableWhiskAction, Int],
-                                                     actualAllocation: Map[ExecutableWhiskAction, Int]): List[A] = {
+  protected[containerpool] def removeFromAction[A](action: ExecutableWhiskAction, pool: Map[A, ContainerData],
+                                                   nToRemove: Int): List[A] = {
     // Try to find a Free container that does NOT have any active activations AND is initialized with any OTHER action
     var freeEligibleContainers = pool.collect {
       // Only warm containers will be removed. Prewarmed containers will stay always.
-      case (ref, w: WarmedData) =>
+      case (ref, w: WarmedData) if w.action.eq(action) =>
         ref -> w
     }
-    freeEligibleContainers = freeEligibleContainers.filter{
-      case(ref, w: WarmedData) =>
-        idealAllocation.get(w.action) match {
-          case Some(ideal) =>
-            actualAllocation.get(w.action) match {
-              case Some(actual) =>
-                actual > ideal
-              case None =>
-                true
-            }
-          case None =>
-            true
-        }
+    var toRemove = ListBuffer.empty[A]
+    for (n <- (1 to nToRemove)) {
+      val (ref, data) = freeEligibleContainers.minBy(_._2.lastUsed)
+      toRemove += ref
+      freeEligibleContainers -= ref
     }
-    remove(freeEligibleContainers, memory)
+    toRemove.toList
   }
 
   /**
