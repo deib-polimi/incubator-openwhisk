@@ -1,17 +1,10 @@
 package org.apache.openwhisk.core.manager.control
 
-import akka.actor.Actor
-import org.apache.openwhisk.core.entity.ExecManifest.{ImageName, RuntimeManifest}
-import org.apache.openwhisk.core.entity._
-import org.apache.openwhisk.core.manager.monitoring.ResponseTimeMonitor
 
-class Planner(action: ExecutableWhiskAction) extends Actor {
 
-  // contains the aggregated metrics (request arrival count, response time)
-  // at each control iteration, the method reset(action) should be called
-  private val RTMonitor = new ResponseTimeMonitor()
+class Planner {
 
-  // to be read from conf
+  //TODO: to be read from conf
   private val MAX_CONTAINERS = 100f
   private val MIN_CONTAINERS = 1.0f
   private val SLA = 0.2f // set point
@@ -27,16 +20,8 @@ class Planner(action: ExecutableWhiskAction) extends Actor {
   // past integral contribution
   private var uiOld = 0.0f
 
-  override def receive: Receive = {
-    case _ => ()
-  }
 
-  def nextResourceAllocation(): Float = {
-
-    // read data from monitoring
-    val rt: Float = RTMonitor.getAggregateRT(action).map(_.toFloat).getOrElse(0f); // response time
-    val req: Float = RTMonitor.getArrivalCount(action).map(_.toFloat).getOrElse(0f); // number of request
-    RTMonitor.resetMonitor(action);
+  def nextResourceAllocation(rt: Float, req: Long): Float = {
 
     if (rt > 0 || req > 0) {
       val e = SLA - rt // error
@@ -58,16 +43,5 @@ class Planner(action: ExecutableWhiskAction) extends Actor {
     else 0
 
   }
-
 }
 
-object Main {
-
-  def main(args: Array[String]): Unit = {
-    val exec = CodeExecAsString(RuntimeManifest("actionKind", ImageName("testImage")), "testCode", None)
-    val invocationNamespace = EntityName("invocationSpace")
-    val action = ExecutableWhiskAction(EntityPath("actionSpace"), EntityName("actionName"), exec)
-    val p = new Planner(action)
-    p.nextResourceAllocation()
-  }
-}

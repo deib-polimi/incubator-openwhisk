@@ -38,6 +38,8 @@ import org.apache.openwhisk.core.{ConfigKeys, WhiskConfig}
 import org.apache.openwhisk.http.Messages
 import org.apache.openwhisk.spi.SpiLoader
 import org.apache.openwhisk.core.database.UserContext
+import org.apache.openwhisk.core.manager.control.Planner
+import org.apache.openwhisk.core.manager.monitoring.{RequestArrival, ResponseArrival, ResponseTimeMonitor}
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -144,6 +146,7 @@ class InvokerReactive(
       val msg = if (isSlotFree) {
         val aid = res.fold(identity, _.activationId)
         val isWhiskSystemError = res.fold(_ => false, _.response.isWhiskError)
+        rtMonitor ! ResponseArrival(tid) //TODO Danilo's monitor been called here with the transaction id
         CompletionMessage(transid, aid, isWhiskSystemError, instance)
       } else {
         ResultMessage(transid, res)
@@ -195,6 +198,13 @@ class InvokerReactive(
   private val pool =
     actorSystem.actorOf(ContainerPool.props(childFactory, poolConfig, activationFeed, prewarmingConfigs))
 
+
+  private val rtMonitor =
+    actorSystem.actorOf(ResponseTimeMonitor.props)
+
+  private val rtPlanner =
+    actorSystem.actorOf(Planner.props(rtMonitor, pool))
+
   /** Is called when an ActivationMessage is read from Kafka */
   def processActivationMessage(bytes: Array[Byte]): Future[Unit] = {
     Future(ActivationMessage.parse(new String(bytes, StandardCharsets.UTF_8)))
@@ -228,6 +238,7 @@ class InvokerReactive(
               action.toExecutableWhiskAction match {
                 case Some(executable) =>
                   pool ! Run(executable, msg)
+                  rtMonitor ! RequestArrival(executable, transid) //TODO Danilo's monitor been called here
                   Future.successful(())
                 case None =>
                   logging.error(this, s"non-executable action reached the invoker ${action.fullyQualifiedName(false)}")
