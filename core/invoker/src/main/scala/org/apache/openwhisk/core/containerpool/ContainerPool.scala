@@ -22,6 +22,7 @@ import org.apache.openwhisk.common.{AkkaLogging, LoggingMarkers, TransactionId}
 import org.apache.openwhisk.core.connector.MessageFeed
 import org.apache.openwhisk.core.entity._
 import org.apache.openwhisk.core.entity.size._
+import org.apache.openwhisk.core.manager.control.AllocationUpdate
 
 import scala.collection.immutable
 import scala.concurrent.duration._
@@ -92,7 +93,30 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
       akka.event.Logging.InfoLevel)
   }
 
+  var idealAllocation = immutable.Map.empty[ExecutableWhiskAction, Int]
+  var actualAllocation = immutable.Map.empty[ExecutableWhiskAction, Int]
+
+  def isLimitAchieved(action: ExecutableWhiskAction): Boolean = {
+    idealAllocation.get(action) match {
+      case Some(idealNCTN) =>
+        actualAllocation.get(action) match {
+          case Some(actualNCTN) =>
+            idealNCTN == actualNCTN
+          case None =>
+            false
+        }
+      case None =>
+        false
+    }
+  }
+
   def receive: Receive = {
+
+    //TODO updates the ideal allocation, but does nothing immediately; actual creation/removal still event based
+    //TODO to reflect the control period, actuation should be immediate, right?
+    case m: AllocationUpdate =>
+        idealAllocation = m.allocation
+
     // A job to run on a container
     //
     // Run messages are received either via the feed or from child containers which cannot process
@@ -106,6 +130,7 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
       // next request to process
       // It is guaranteed, that only the first message on the buffer is resent.
       if (runBuffer.isEmpty || isResentFromBuffer) {
+
         val createdContainer =
           // Is there enough space on the invoker for this action to be executed.
           if (hasPoolSpaceFor(busyPool, r.action.limits.memory.megabytes.MB)) {
@@ -117,7 +142,8 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
                 // There was no warm container. Try to take a prewarm container or a cold container.
 
                 // Is there enough space to create a new container or do other containers have to be removed?
-                if (hasPoolSpaceFor(busyPool ++ freePool, r.action.limits.memory.megabytes.MB)) {
+                if (hasPoolSpaceFor(busyPool ++ freePool, r.action.limits.memory.megabytes.MB) &&
+                    isLimitAchieved(r.action)) { //TODO check if the ideal number has been achieved
                   takePrewarmContainer(r.action)
                     .map(container => (container, "prewarmed"))
                     .orElse(Some(createContainer(r.action.limits.memory.megabytes.MB), "cold"))
@@ -126,7 +152,11 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
                 // Remove a container and create a new one for the given job
                 ContainerPool
                 // Only free up the amount, that is really needed to free up
-                  .remove(freePool, Math.min(r.action.limits.memory.megabytes, memoryConsumptionOf(freePool)).MB)
+                  //TODO calling our function
+                  .removeWithinLimits(
+                      freePool,
+                      Math.min(r.action.limits.memory.megabytes, memoryConsumptionOf(freePool)).MB,
+                      actualAllocation, idealAllocation)
                   .map(removeContainer)
                   // If the list had at least one entry, enough containers were removed to start the new container. After
                   // removing the containers, we are not interested anymore in the containers that have been removed.
@@ -348,6 +378,32 @@ object ContainerPool {
         true
       case _ => false
     }
+  }
+
+  protected[containerpool] def removeWithinLimits[A](pool: Map[A, ContainerData], memory: ByteSize,
+                                                     idealAllocation: Map[ExecutableWhiskAction, Int],
+                                                     actualAllocation: Map[ExecutableWhiskAction, Int]): List[A] = {
+    // Try to find a Free container that does NOT have any active activations AND is initialized with any OTHER action
+    var freeEligibleContainers = pool.collect {
+      // Only warm containers will be removed. Prewarmed containers will stay always.
+      case (ref, w: WarmedData) =>
+        ref -> w
+    }
+    freeEligibleContainers = freeEligibleContainers.filter{
+      case(ref, w: WarmedData) =>
+        idealAllocation.get(w.action) match {
+          case Some(ideal) =>
+            actualAllocation.get(w.action) match {
+              case Some(actual) =>
+                actual > ideal
+              case None =>
+                true
+            }
+          case None =>
+            true
+        }
+    }
+    remove(freeEligibleContainers, memory)
   }
 
   /**

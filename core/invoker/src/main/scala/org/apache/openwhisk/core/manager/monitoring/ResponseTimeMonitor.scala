@@ -1,27 +1,23 @@
 package org.apache.openwhisk.core.manager.monitoring
 
-import akka.actor.{Actor, Props}
+import akka.actor.{Actor, ActorRef, Props}
 import org.apache.openwhisk.common.{AkkaLogging, TransactionId}
 import org.apache.openwhisk.core.entity.ExecutableWhiskAction
 
-import scala.collection.mutable
+import scala.collection.{immutable, mutable}
 
 case class RequestArrival(action: ExecutableWhiskAction, tid: TransactionId)
 case class ResponseArrival(tid: TransactionId)
-case class RequestArrivalCount(action: ExecutableWhiskAction, count: Option[Long])
-case class ResponseTimeAverage(action: ExecutableWhiskAction, average: Option[Double])
+case class RTMetrics(metrics: immutable.Map[ExecutableWhiskAction,(Float,Long)])
 
 class ResponseTimeMonitor
   extends Actor {
 
   var arrivalCount = mutable.Map.empty[ExecutableWhiskAction, Long]
   var transactionTime = mutable.Map.empty[TransactionId, (ExecutableWhiskAction, Long)]
-  var aggregateRT = mutable.Map.empty[ExecutableWhiskAction, Double]
+  var aggregateRT = mutable.Map.empty[ExecutableWhiskAction, Float]
 
   implicit val logging = new AkkaLogging(context.system.log)
-
-  def getArrivalCount(action: ExecutableWhiskAction): Option[Long] = arrivalCount.get(action)
-  def getAggregateRT(action: ExecutableWhiskAction): Option[Double] = aggregateRT.get(action)
 
   def resetMonitor(action: ExecutableWhiskAction) = {
     arrivalCount -= action
@@ -35,11 +31,26 @@ class ResponseTimeMonitor
     case rsMsg: ResponseArrival =>
       handleResponseArrival(rsMsg)
 
-    case raMsg: RequestArrivalCount =>
-      sender ! RequestArrivalCount(raMsg.action, getArrivalCount(raMsg.action))
+    case rtMsg: RTMetrics =>
+      handleRTMetrics(sender)
+  }
 
-    case rtMsg: ResponseTimeAverage =>
-      sender ! ResponseTimeAverage(rtMsg.action, getAggregateRT(rtMsg.action))
+  def handleRTMetrics(sender: ActorRef) = {
+    var metrics = immutable.Map.empty[ExecutableWhiskAction, (Float, Long)]
+    for((action, rt) <- aggregateRT){
+      getAggregateRT(action) match {
+        case Some(rt) =>
+          getArrivalCount(action) match {
+            case Some(count) =>
+              metrics += (action -> (rt, count))
+            case None =>
+              metrics += (action -> (0, 0))
+          }
+        case None =>
+          metrics += (action -> (0, 0))
+      }
+    }
+    sender ! RTMetrics(metrics)
   }
 
   def handleRequestArrival(rqMsg : RequestArrival) : Unit = {
@@ -90,6 +101,9 @@ class ResponseTimeMonitor
           s"aggregated response time for transaction ${rtMsg.tid} can not be calculated because transaction time is None")
     }
   }
+
+  private def getArrivalCount(action: ExecutableWhiskAction): Option[Long] = arrivalCount.get(action)
+  private def getAggregateRT(action: ExecutableWhiskAction): Option[Float] = aggregateRT.get(action)
 
 }
 

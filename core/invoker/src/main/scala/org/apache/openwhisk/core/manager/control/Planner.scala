@@ -1,7 +1,5 @@
 package org.apache.openwhisk.core.manager.control
 
-
-
 class Planner {
 
   //TODO: to be read from conf
@@ -19,7 +17,6 @@ class Planner {
 
   // past integral contribution
   private var uiOld = 0.0f
-
 
   def nextResourceAllocation(rt: Float, req: Long): Float = {
 
@@ -40,8 +37,7 @@ class Planner {
 
       approxCore // return cores
     }
-    else 0
-
+    else 0.0f
   }
 }
 
