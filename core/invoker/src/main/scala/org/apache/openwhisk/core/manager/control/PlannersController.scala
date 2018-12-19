@@ -12,13 +12,11 @@ case class RTMetricsRequest()
 
 case class AllocationUpdate(allocation: immutable.Map[ExecutableWhiskAction, Float])
 
-
 class PlannersController(controlPeriod: Int, // in milliseconds
                          responseTimeMonitor: ActorRef,
                          ctnPool: ActorRef) extends Actor {
 
-
-  val planners: mutable.Map[ExecutableWhiskAction, Planner] = mutable.Map[ExecutableWhiskAction, Planner]()
+  val planners: mutable.Map[ExecutableWhiskAction, Planner] = mutable.Map.empty[ExecutableWhiskAction, Planner]
   val timer = new Timer();
 
   protected def tick(): Unit = {
@@ -46,13 +44,11 @@ class PlannersController(controlPeriod: Int, // in milliseconds
 
   private def handleRTMetrics(rtMetrics: immutable.Map[ExecutableWhiskAction, (Float,Long)]) : Unit = {
 
-    val allocation =  Map[ExecutableWhiskAction, Float]()
-
-    // read data from monitoring for each function
-    for ((k, (rt, req)) <- rtMetrics) {
-      val planner = planners.getOrElseUpdate(k, new Planner())
-      allocation(k) = planner.nextResourceAllocation(rt, req)
-    }
+    val allocation: Map[ExecutableWhiskAction, Float] = rtMetrics.map({
+      case (k , (rt, req)) =>
+        val planner = planners.getOrElseUpdate(k, new Planner())
+        (k ,planner.nextResourceAllocation(rt, req))
+    })
 
     ctnPool ! AllocationUpdate(allocation)
   }

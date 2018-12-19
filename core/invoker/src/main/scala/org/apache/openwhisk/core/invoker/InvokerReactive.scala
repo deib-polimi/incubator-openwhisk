@@ -38,7 +38,7 @@ import org.apache.openwhisk.core.{ConfigKeys, WhiskConfig}
 import org.apache.openwhisk.http.Messages
 import org.apache.openwhisk.spi.SpiLoader
 import org.apache.openwhisk.core.database.UserContext
-import org.apache.openwhisk.core.manager.control.Planner
+import org.apache.openwhisk.core.manager.control.PlannersController
 import org.apache.openwhisk.core.manager.monitoring.{RequestArrival, ResponseArrival, ResponseTimeMonitor}
 
 import scala.concurrent.duration._
@@ -70,6 +70,8 @@ class InvokerReactive(
   limitsConfig: ConcurrencyLimitConfig = loadConfigOrThrow[ConcurrencyLimitConfig](ConfigKeys.concurrencyLimit))(
   implicit actorSystem: ActorSystem,
   logging: Logging) {
+
+  private val controlPeriod: Int = 10
 
   implicit val materializer: ActorMaterializer = ActorMaterializer()
   implicit val ec: ExecutionContext = actorSystem.dispatcher
@@ -142,6 +144,7 @@ class InvokerReactive(
                                                 isSlotFree: Boolean) => {
     implicit val transid: TransactionId = tid
 
+
     def send(res: Either[ActivationId, WhiskActivation], recovery: Boolean = false) = {
       val msg = if (isSlotFree) {
         val aid = res.fold(identity, _.activationId)
@@ -203,7 +206,7 @@ class InvokerReactive(
     actorSystem.actorOf(ResponseTimeMonitor.props)
 
   private val rtPlanner =
-    actorSystem.actorOf(Planner.props(rtMonitor, pool))
+    actorSystem.actorOf(PlannersController.props(controlPeriod, rtMonitor, pool))
 
   /** Is called when an ActivationMessage is read from Kafka */
   def processActivationMessage(bytes: Array[Byte]): Future[Unit] = {
