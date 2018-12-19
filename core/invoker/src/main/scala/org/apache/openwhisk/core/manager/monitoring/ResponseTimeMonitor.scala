@@ -12,7 +12,6 @@ class ResponseTimeMonitor
   case class RequestArrival(action: ExecutableWhiskAction)
   case class ResponseTime(action: ExecutableWhiskAction, rt: Double)
 
-
   var arrivalCount = immutable.Map.empty[ExecutableWhiskAction, Long]
   var aggregateRT = immutable.Map.empty[ExecutableWhiskAction, Double]
 
