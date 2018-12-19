@@ -384,15 +384,23 @@ object ContainerPool {
                                                      idealAllocation: Map[ExecutableWhiskAction, Int],
                                                      actualAllocation: Map[ExecutableWhiskAction, Int]): List[A] = {
     // Try to find a Free container that does NOT have any active activations AND is initialized with any OTHER action
-    val freeEligibleContainers = pool.collect {
+    var freeEligibleContainers = pool.collect {
       // Only warm containers will be removed. Prewarmed containers will stay always.
       case (ref, w: WarmedData) =>
+        ref -> w
+    }
+    freeEligibleContainers = freeEligibleContainers.filter{
+      case(ref, w: WarmedData) =>
         idealAllocation.get(w.action) match {
           case Some(ideal) =>
             actualAllocation.get(w.action) match {
-              case Some(actual) if actual > ideal =>
-                ref -> w
+              case Some(actual) =>
+                actual > ideal
+              case None =>
+                true
             }
+          case None =>
+            true
         }
     }
     remove(freeEligibleContainers, memory)

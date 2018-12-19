@@ -3,8 +3,8 @@ package org.apache.openwhisk.core.manager.control
 import scala.collection.immutable
 import akka.actor.{Actor, ActorRef, Props}
 import org.apache.openwhisk.core.entity.ExecutableWhiskAction
+import org.apache.openwhisk.core.manager.monitoring.RTMetrics
 
-case class RTMetrics(metrics: immutable.Map[ExecutableWhiskAction,(Float,Long)])
 case class AllocationUpdate(allocation: immutable.Map[ExecutableWhiskAction, Int])
 
 class Planner(responseTimeMonitor: ActorRef, ctnPool: ActorRef)
