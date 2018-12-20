@@ -169,10 +169,10 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
     }
   }
 
+  var secondRunBuffer = immutable.Queue.empty[Run]
+
   def receive: Receive = {
 
-    //TODO updates the ideal allocation, but does nothing immediately; actual creation/removal still event based
-    //TODO to reflect the control period, actuation should be immediate, right?
     case m: AllocationUpdate =>
       handleActuation()
       sender ! AllocationUpdate(decidedAllocation)
@@ -208,11 +208,12 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
                     .map(container => (container, "prewarmed"))
                     .orElse(Some(createContainer(r.action.limits.memory.megabytes.MB), "cold"))
                 } else None)
+              //TODO should not try to remove anymore
+              /*
               .orElse(
                 // Remove a container and create a new one for the given job
                 ContainerPool
                 // Only free up the amount, that is really needed to free up
-                  //TODO should not call remove anymore
                   .remove(
                       freePool,
                       Math.min(r.action.limits.memory.megabytes, memoryConsumptionOf(freePool)).MB)
@@ -223,7 +224,7 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
                   .map(_ =>
                     takePrewarmContainer(r.action)
                       .map(container => (container, "recreatedPrewarm"))
-                      .getOrElse(createContainer(r.action.limits.memory.megabytes.MB), "recreated")))
+                      .getOrElse(createContainer(r.action.limits.memory.megabytes.MB), "recreated")))*/
 
           } else None
 
@@ -244,8 +245,12 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
               // It is guaranteed that the currently executed messages is the head of the queue, if the message comes
               // from the buffer
               val (_, newBuffer) = runBuffer.dequeue
-              runBuffer = newBuffer
+              runBuffer = secondRunBuffer ++ newBuffer
+              secondRunBuffer = immutable.Queue.empty
+              //if(!runBuffer.isEmpty)
               runBuffer.dequeueOption.foreach { case (run, _) => self ! run }
+              //else{
+              //}
             }
             actor ! r // forwards the run request to the container
             logContainerStart(r, containerState, data.activeActivationCount)
@@ -271,6 +276,10 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
             if (!isResentFromBuffer) {
               // Add this request to the buffer, as it is not there yet.
               runBuffer = runBuffer.enqueue(r)
+            } else{
+              //TODO do not re-add to the first queue to give opportunity for other requests to be processed
+              //TODO ideally, should also move subsequent requests targeting the same action 
+              secondRunBuffer = secondRunBuffer.enqueue(r)
             }
             // As this request is the first one in the buffer, try again to execute it.
             self ! Run(r.action, r.msg, retryLogDeadline)
