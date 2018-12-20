@@ -94,28 +94,32 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
       akka.event.Logging.InfoLevel)
   }
 
-  var idealAllocation = immutable.Map.empty[ExecutableWhiskAction, Int]
-  //var actualAllocation = immutable.Map.empty[ExecutableWhiskAction, Int]
+  var idealAllocation = immutable.Map.empty[ExecutableWhiskAction, Float]
+  var decidedAllocation = immutable.Map.empty[ExecutableWhiskAction, Float]
 
   private def handleActuation[A]() = {
+    val capacity = poolConfig.userMemory.toMB
+    decidedAllocation = calculateGreedyAllocation(capacity)
+  }
+
+  private def calculateGreedyAllocation(capacity: Long): immutable.Map[ExecutableWhiskAction, Float] = {
+    val capacity = poolConfig.userMemory.toMB
+    var allocatedCapacity = 0
+    var allocation = immutable.Map.empty[ExecutableWhiskAction, Float]
     val toBeRemoved = idealAllocation filter {
       case (action, ideal) =>
         getActualAllocationForAction(action) > ideal
     }
     for((action, ideal) <- toBeRemoved) {
       val actual = getActualAllocationForAction(action)
-      ContainerPool.removeFromAction(
+      val toRemove = actual.toInt - ideal.toInt
+      val removed = ContainerPool.removeFromAction(
         action,
         freePool,
-        actual.toInt - ideal.toInt)
-        .map(removeContainer)
-        // If the list had at least one entry, enough containers were removed to start the new container. After
-        // removing the containers, we are not interested anymore in the containers that have been removed.
-        .headOption
-        .map(_ =>
-          takePrewarmContainer(action)
-            .map(container => (container, "recreatedPrewarm"))
-            .getOrElse(createContainer(action.limits.memory.megabytes.MB), "recreated"))
+        toRemove)
+        .map(removeContainer).size
+      allocation += action -> (actual - removed)
+      allocatedCapacity += (actual - removed).toInt
     }
     val toBeCreated = idealAllocation collect {
       case (action, ideal) =>
@@ -123,9 +127,15 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
     }
     for((action, ideal) <- toBeRemoved) {
       val actual = getActualAllocationForAction(action)
-      val nToCreate = ideal - actual
-      //TODO attempt to create nToCreate CTNs here
+      val availableCapacity = capacity - allocatedCapacity
+      val toCreate = Math.min(availableCapacity, ideal - actual).toInt
+      var created = List.range(toCreate, 0).filter(n => {
+        hasPoolSpaceFor(busyPool ++ freePool, action.limits.memory.megabytes.MB * n)
+      }).head
+      allocation += action -> (actual + created)
+      allocatedCapacity += (actual + created).toInt
     }
+    allocation
   }
 
   private def getActualAllocation(): immutable.Map[ExecutableWhiskAction, Float] = {
@@ -150,10 +160,10 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
     count
   }
 
-  private def isLimitAchieved(action: ExecutableWhiskAction): Boolean = {
+  private def isBellowLimit(action: ExecutableWhiskAction): Boolean = {
     idealAllocation.get(action) match {
       case Some(ideal) =>
-        getActualAllocationForAction(action) == ideal
+        getActualAllocationForAction(action) < ideal
       case None =>
         true //TODO no ideal, any ideal?
     }
@@ -165,8 +175,7 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
     //TODO to reflect the control period, actuation should be immediate, right?
     case m: AllocationUpdate =>
       handleActuation()
-      //TODO remember: the actual may result different from ideal if not all ctns could be created/removed
-      sender ! AllocationUpdate(getActualAllocation())
+      sender ! AllocationUpdate(decidedAllocation)
 
     // A job to run on a container
     //
@@ -194,7 +203,7 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
 
                 // Is there enough space to create a new container or do other containers have to be removed?
                 if (hasPoolSpaceFor(busyPool ++ freePool, r.action.limits.memory.megabytes.MB) &&
-                    isLimitAchieved(r.action)) { //TODO check if the ideal number has been achieved
+                    isBellowLimit(r.action)) { //TODO check if the ideal number has been achieved
                   takePrewarmContainer(r.action)
                     .map(container => (container, "prewarmed"))
                     .orElse(Some(createContainer(r.action.limits.memory.megabytes.MB), "cold"))
