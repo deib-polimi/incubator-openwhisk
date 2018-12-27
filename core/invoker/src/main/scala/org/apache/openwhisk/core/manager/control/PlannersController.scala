@@ -19,6 +19,8 @@ class PlannersController(controlPeriod: Int, // in milliseconds
   private val timer = new Timer();
   private var started = false
 
+  start()
+
   protected def tick(): Unit = {
     // at each control period ask for RTMetrics
     responseTimeMonitor ! RTMetrics
@@ -66,7 +68,7 @@ class PlannersController(controlPeriod: Int, // in milliseconds
         planners(k).updateState(a)
     })
   }
-  
+
 }
 
 object PlannersController {

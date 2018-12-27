@@ -115,8 +115,8 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
   }
 
   private def calculateGreedyAllocation(capacity: Long): immutable.Map[ExecutableWhiskAction, Float] = {
-    val capacity = poolConfig.userMemory.toMB
-    var allocatedCapacity = 0
+    val capacity = poolConfig.userMemory
+    var allocatedCapacity = ByteSize(0l, SizeUnits.MB)
     var allocation = immutable.Map.empty[ExecutableWhiskAction, Float]
     val toBeRemoved = idealAllocation filter {
       case (action, ideal) =>
@@ -129,9 +129,9 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
         action,
         freePool,
         toRemove)
-        .map(removeContainer).size
-      allocation += action -> (actual - removed)
-      allocatedCapacity += (actual - removed).toInt
+      removed.map(removeContainer)
+      allocation += action -> (actual - removed.size)
+      allocatedCapacity += (action.limits.memory.megabytes.MB * (actual - removed.size).toInt)
     }
 
     val toBeCreated = (idealAllocation -- toBeRemoved.keySet)
@@ -141,17 +141,17 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
     }*/
     for((action, ideal) <- toBeCreated) {
       val actual = getActualAllocationForAction(action)
-      val availableCapacity = capacity - allocatedCapacity
+      val availableCapacity = (capacity - allocatedCapacity) / action.limits.memory.megabytes.MB
       val toCreate = Math.min(availableCapacity, ideal - actual).toInt
       List.range(toCreate, 0).filter(n => {
         hasPoolSpaceFor(busyPool ++ freePool, action.limits.memory.megabytes.MB * n)
       }).headOption match {
         case Some(created) =>
           allocation += action -> (actual + created)
-          allocatedCapacity += (actual + created).toInt
+          allocatedCapacity += (action.limits.memory.megabytes.MB * (actual + created).toInt)
         case None =>
           allocation += action -> actual
-          allocatedCapacity += actual.toInt
+          allocatedCapacity += (action.limits.memory.megabytes.MB * actual.toInt)
       }
     }
     allocation
@@ -177,6 +177,10 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
       }
     }
     count
+  }
+
+  private def isSystemAction(action: ExecutableWhiskAction): Boolean = {
+    action.namespace.namespace contains "whisk.system"
   }
 
   private def isBellowLimit(action: ExecutableWhiskAction): Boolean = {
@@ -222,7 +226,8 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
 
                 // Is there enough space to create a new container or do other containers have to be removed?
                 if (hasPoolSpaceFor(busyPool ++ freePool, r.action.limits.memory.megabytes.MB) &&
-                    isBellowLimit(r.action)) { //TODO check if the ideal number has been achieved
+                  (isSystemAction(r.action) ||
+                    isBellowLimit(r.action))) { //TODO check if the ideal number has been achieved
                   takePrewarmContainer(r.action)
                     .map(container => (container, "prewarmed"))
                     .orElse(Some(createContainer(r.action.limits.memory.megabytes.MB), "cold"))
@@ -295,13 +300,21 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
             if (!isResentFromBuffer) {
               // Add this request to the buffer, as it is not there yet.
               runBuffer = runBuffer.enqueue(r)
+              // As this request is the first one in the buffer, try again to execute it.
+              self ! Run(r.action, r.msg, retryLogDeadline)
             } else{
-              //TODO do not re-add to the first queue to give opportunity for other requests to be processed
-              //TODO ideally, should also move subsequent requests targeting the same action
-              secondRunBuffer = secondRunBuffer.enqueue(r)
+              val (rNext, newBuffer) = runBuffer.dequeue
+              runBuffer.dequeueOption match {
+                case Some((run, newBuffer)) =>
+                  //TODO do not re-add to the first queue to give opportunity for other requests to be processed
+                  //TODO ideally, should also move subsequent requests targeting the same action
+                  secondRunBuffer = secondRunBuffer.enqueue(r)
+                  self ! Run(rNext.action, rNext.msg, retryLogDeadline)
+                case None =>
+                  //TODO this is the only request waiting to be process, retry it
+                  self ! Run(r.action, r.msg, retryLogDeadline)
+              }
             }
-            // As this request is the first one in the buffer, try again to execute it.
-            self ! Run(r.action, r.msg, retryLogDeadline)
         }
       } else {
         // There are currently actions waiting to be executed before this action gets executed.
