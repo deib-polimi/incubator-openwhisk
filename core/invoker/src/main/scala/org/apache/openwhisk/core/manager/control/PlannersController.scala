@@ -41,7 +41,12 @@ class PlannersController(responseTimeMonitor: ActorRef,
     val allocation: immutable.Map[ExecutableWhiskAction, Float] = rtMetrics.map({
       case (k , (rt, req)) =>
         val planner = planners.getOrElseUpdate(k, new Planner())
-        (k ,planner.nextResourceAllocation(rt, req))
+        val nextAllocation = planner.nextResourceAllocation(rt, req)
+        logging.info(
+          this,
+          s"next allocation for action ${k} with average rt ${rt} and count ${req} is ${nextAllocation}"
+        )
+        (k , nextAllocation)
     })
 
     ctnPool ! AllocationUpdate(allocation)

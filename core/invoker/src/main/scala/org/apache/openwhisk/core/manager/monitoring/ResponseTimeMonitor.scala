@@ -37,17 +37,12 @@ class ResponseTimeMonitor
       this,
       s"handling response time metrics request"
     )
-    for((action, rt) <- aggregateRT){
+    for((action, count) <- arrivalCount){
       getAggregateRT(action) match {
         case Some(rt) =>
-          getArrivalCount(action) match {
-            case Some(count) =>
-              metrics += (action -> (rt, count))
-            case None =>
-              metrics += (action -> (0, 0))
-          }
+          metrics += (action -> (rt, count))
         case None =>
-          metrics += (action -> (0, 0))
+          metrics += (action -> (0, count))
       }
     }
     resetMonitor()
@@ -60,12 +55,7 @@ class ResponseTimeMonitor
       this,
       s"handling request arrival for action ${rqMsg.action})"
     )
-    arrivalCount.get(rqMsg.action) match {
-      case Some(currentNRequests) =>
-        arrivalCount(rqMsg.action) = currentNRequests + 1
-      case None =>
-        arrivalCount(rqMsg.action) = 1
-    }
+    arrivalCount.getOrElseUpdate(rqMsg.action, 0)
     transactionTime(rqMsg.tid) = (rqMsg.action, timeOfArrival)
   }
 
@@ -73,23 +63,24 @@ class ResponseTimeMonitor
     val timeOfResponseArrival = System.currentTimeMillis
     transactionTime.get(rtMsg.tid) match {
       case Some((action, timeOfRequestArrival)) =>
-        logging.info(
-          this,
-          s"handling response arrival for action ${action})"
-        )
         arrivalCount.get(action) match {
           case Some (currentCount) =>
             val responseTime = timeOfResponseArrival - timeOfRequestArrival
+            logging.info(
+              this,
+              s"handling response arrival for action ${action}), with RT = ${responseTime}ms"
+            )
             aggregateRT.get(action) match {
               case Some(actualRT) =>
-                var newRT = (actualRT * (currentCount - 1) + responseTime) / currentCount
+                var newRT = (actualRT * currentCount + responseTime) / (currentCount + 1)
                 aggregateRT(action) = newRT
               case None =>
                 aggregateRT(action) = responseTime
             }
+            arrivalCount(action) = currentCount + 1
             transactionTime.remove(rtMsg.tid)
           case None =>
-            //TODO if all request arrivals are accounted for, there must be at least one accounted for when a response time evt arrives
+            //TODO if all request arrivals are accounted for, there must be at least the initialized zero when a response time evt arrives
             logging.error(
               this,
               s"aggregated response time for ${action} can not be calculated because arrival count is None")
@@ -104,8 +95,16 @@ class ResponseTimeMonitor
   }
 
   private def resetMonitor() = {
-    arrivalCount.clear()
-    aggregateRT.clear()
+    for((action, count) <- arrivalCount){
+      /*val pendingTransactions = transactionTime.filter {
+        case (tId, (tAction, arrivalTime)) =>
+          tAction.docid.equals(action.docid)
+        case _ =>
+          false
+      }*/
+      arrivalCount(action) = 0
+      aggregateRT.remove(action)
+    }
   }
 
   private def getArrivalCount(action: ExecutableWhiskAction): Option[Long] = arrivalCount.get(action)
