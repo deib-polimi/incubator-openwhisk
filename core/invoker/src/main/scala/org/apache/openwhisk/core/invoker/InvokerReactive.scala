@@ -24,22 +24,20 @@ import akka.actor.{ActorRefFactory, ActorSystem, Props}
 import akka.event.Logging.InfoLevel
 import akka.stream.ActorMaterializer
 import org.apache.kafka.common.errors.RecordTooLargeException
-import pureconfig._
-import spray.json._
-import org.apache.openwhisk.common.tracing.WhiskTracerProvider
 import org.apache.openwhisk.common._
+import org.apache.openwhisk.common.tracing.WhiskTracerProvider
 import org.apache.openwhisk.core.connector._
 import org.apache.openwhisk.core.containerpool._
 import org.apache.openwhisk.core.containerpool.logging.LogStoreProvider
-import org.apache.openwhisk.core.database._
+import org.apache.openwhisk.core.database.{UserContext, _}
 import org.apache.openwhisk.core.entity._
-import org.apache.openwhisk.core.entity.size._
+import org.apache.openwhisk.core.manager.control.{ControlPeriod, PlannersController}
+import org.apache.openwhisk.core.manager.monitoring.{RequestArrival, ResponseArrival, ResponseTimeMonitor}
 import org.apache.openwhisk.core.{ConfigKeys, WhiskConfig}
 import org.apache.openwhisk.http.Messages
 import org.apache.openwhisk.spi.SpiLoader
-import org.apache.openwhisk.core.database.UserContext
-import org.apache.openwhisk.core.manager.control.PlannersController
-import org.apache.openwhisk.core.manager.monitoring.{RequestArrival, ResponseArrival, ResponseTimeMonitor}
+import pureconfig._
+import spray.json._
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -203,9 +201,10 @@ class InvokerReactive(
   private val rtMonitor =
     actorSystem.actorOf(ResponseTimeMonitor.props)
 
-  private val controlPeriod: Int = 10 * 1000
+  private val controlPeriod = 10.seconds
   private val rtPlanner =
-    actorSystem.actorOf(PlannersController.props(controlPeriod, rtMonitor, pool))
+    actorSystem.actorOf(PlannersController.props(rtMonitor, pool))
+  private val rtPlannerScheduler = actorSystem.scheduler.schedule(controlPeriod, controlPeriod, rtPlanner, ControlPeriod())
 
   /** Is called when an ActivationMessage is read from Kafka */
   def processActivationMessage(bytes: Array[Byte]): Future[Unit] = {

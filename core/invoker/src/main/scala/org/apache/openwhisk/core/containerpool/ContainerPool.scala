@@ -97,7 +97,10 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
   var idealAllocation = immutable.Map.empty[ExecutableWhiskAction, Float]
   var decidedAllocation = immutable.Map.empty[ExecutableWhiskAction, Float]
 
-  private def handleActuation[A]() = {
+  private def handleActuation[A](allocation: Map[ExecutableWhiskAction, Float]) = {
+    logging.info(this, s"handling allocation update")
+    idealAllocation = allocation
+    printAllocation(idealAllocation)
     val capacity = poolConfig.userMemory.toMB
     decidedAllocation = calculateGreedyAllocation(capacity)
     printAllocation(decidedAllocation)
@@ -106,11 +109,11 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
   private def printAllocation(allocation: Map[ExecutableWhiskAction, Float]) = {
     var allocationMsg = ""
     for((action, value) <- allocation){
-      allocationMsg += s"allocation for action ${action} is of ${value} CTNs"
+      allocationMsg += s"--- Action ${action.name}: ${Math.ceil(value)} CTNs\n"
     }
     logging.info(
       this,
-      allocationMsg
+      s"${allocationMsg}"
     )
   }
 
@@ -120,15 +123,17 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
     var allocation = immutable.Map.empty[ExecutableWhiskAction, Float]
     val toBeRemoved = idealAllocation filter {
       case (action, ideal) =>
-        getActualAllocationForAction(action) > ideal
+        getActualAllocationForAction(action) > Math.ceil(ideal)
     }
     for((action, ideal) <- toBeRemoved) {
+      val intIdeal = Math.ceil(ideal)
       val actual = getActualAllocationForAction(action)
-      val toRemove = actual.toInt - ideal.toInt
+      val toRemove = (actual - intIdeal).toInt
       val removed = ContainerPool.removeFromAction(
-        action,
-        freePool,
-        toRemove)
+          action,
+          freePool,
+          toRemove)
+      logging.info(this, s"removed ${removed.size} out of ${toRemove} CTNs for action ${action}")
       removed.map(removeContainer)
       allocation += action -> (actual - removed.size)
       allocatedCapacity += (action.limits.memory.megabytes.MB * (actual - removed.size).toInt)
@@ -140,9 +145,10 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
         getActualAllocationForAction(action) < ideal
     }*/
     for((action, ideal) <- toBeCreated) {
+      val intIdeal = Math.ceil(ideal)
       val actual = getActualAllocationForAction(action)
       val availableCapacity = (capacity - allocatedCapacity) / action.limits.memory.megabytes.MB
-      val toCreate = Math.min(availableCapacity, ideal - actual).toInt
+      val toCreate = Math.min(availableCapacity, intIdeal - actual).toInt
       List.range(toCreate, 0).filter(n => {
         hasPoolSpaceFor(busyPool ++ freePool, action.limits.memory.megabytes.MB * n)
       }).headOption match {
@@ -197,7 +203,7 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
   def receive: Receive = {
 
     case m: AllocationUpdate =>
-      handleActuation()
+      handleActuation(m.allocation)
       sender ! AllocationUpdate(decidedAllocation)
 
     // A job to run on a container
@@ -303,13 +309,14 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
               // As this request is the first one in the buffer, try again to execute it.
               self ! Run(r.action, r.msg, retryLogDeadline)
             } else{
-              val (rNext, newBuffer) = runBuffer.dequeue
-              runBuffer.dequeueOption match {
-                case Some((run, newBuffer)) =>
+              val (_, newBuffer) = runBuffer.dequeue
+              newBuffer.dequeueOption match {
+                case Some((nextRun, restBuffer)) =>
                   //TODO do not re-add to the first queue to give opportunity for other requests to be processed
                   //TODO ideally, should also move subsequent requests targeting the same action
                   secondRunBuffer = secondRunBuffer.enqueue(r)
-                  self ! Run(rNext.action, rNext.msg, retryLogDeadline)
+                  runBuffer = newBuffer
+                  self ! nextRun
                 case None =>
                   //TODO this is the only request waiting to be process, retry it
                   self ! Run(r.action, r.msg, retryLogDeadline)
@@ -485,14 +492,16 @@ object ContainerPool {
     // Try to find a Free container that does NOT have any active activations AND is initialized with any OTHER action
     var freeEligibleContainers = pool.collect {
       // Only warm containers will be removed. Prewarmed containers will stay always.
-      case (ref, w: WarmedData) if w.action.eq(action) =>
+      case (ref, w: WarmedData) if w.action.docid.equals(action.docid) =>
         ref -> w
     }
-    var toRemove = ListBuffer.empty[A]
+    val toRemove = ListBuffer.empty[A]
     for (n <- (1 to nToRemove)) {
-      val (ref, data) = freeEligibleContainers.minBy(_._2.lastUsed)
-      toRemove += ref
-      freeEligibleContainers -= ref
+      if (freeEligibleContainers.nonEmpty) {
+        val (ref, data) = freeEligibleContainers.minBy(_._2.lastUsed)
+        toRemove += ref
+        freeEligibleContainers -= ref
+      }
     }
     toRemove.toList
   }

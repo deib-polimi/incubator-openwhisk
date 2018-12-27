@@ -8,7 +8,8 @@ import scala.collection.{immutable, mutable}
 
 case class RequestArrival(action: ExecutableWhiskAction, tid: TransactionId)
 case class ResponseArrival(tid: TransactionId)
-case class RTMetrics(metrics: immutable.Map[ExecutableWhiskAction,(Float,Long)])
+case class RTMetricsRequest()
+case class RTMetricsResponse(metrics: immutable.Map[ExecutableWhiskAction,(Float,Long)])
 
 class ResponseTimeMonitor
   extends Actor {
@@ -19,11 +20,6 @@ class ResponseTimeMonitor
 
   implicit val logging = new AkkaLogging(context.system.log)
 
-  def resetMonitor(action: ExecutableWhiskAction) = {
-    arrivalCount -= action
-    aggregateRT -= action
-  }
-
   override def receive: Receive = {
     case rqMsg: RequestArrival =>
       handleRequestArrival(rqMsg)
@@ -31,12 +27,16 @@ class ResponseTimeMonitor
     case rsMsg: ResponseArrival =>
       handleResponseArrival(rsMsg)
 
-    case rtMsg: RTMetrics =>
+    case rtMsg: RTMetricsRequest =>
       handleRTMetrics(sender)
   }
 
   def handleRTMetrics(sender: ActorRef) = {
     var metrics = immutable.Map.empty[ExecutableWhiskAction, (Float, Long)]
+    logging.info(
+      this,
+      s"handling response time metrics request"
+    )
     for((action, rt) <- aggregateRT){
       getAggregateRT(action) match {
         case Some(rt) =>
@@ -50,7 +50,8 @@ class ResponseTimeMonitor
           metrics += (action -> (0, 0))
       }
     }
-    sender ! RTMetrics(metrics)
+    resetMonitor()
+    sender ! RTMetricsResponse(metrics)
   }
 
   def handleRequestArrival(rqMsg : RequestArrival) : Unit = {
@@ -102,7 +103,13 @@ class ResponseTimeMonitor
     }
   }
 
+  private def resetMonitor() = {
+    arrivalCount.clear()
+    aggregateRT.clear()
+  }
+
   private def getArrivalCount(action: ExecutableWhiskAction): Option[Long] = arrivalCount.get(action)
+
   private def getAggregateRT(action: ExecutableWhiskAction): Option[Float] = aggregateRT.get(action)
 
 }

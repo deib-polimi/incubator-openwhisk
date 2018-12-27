@@ -3,9 +3,9 @@ package org.apache.openwhisk.core.manager.control
 class Planner {
 
   //TODO: to be read from conf
-  private val MAX_CONTAINERS = 2f
-  private val MIN_CONTAINERS = 0f
-  private val SLA = 0.2f // set point
+  private val MAX_CONTAINERS = 8f
+  private val MIN_CONTAINERS = 1f
+  private val SLA = 20f // set point
   private val A1_NOM = 0.1963f
   private val A2_NOM = 0.002f
   private val A3_NOM = 0.5658f
