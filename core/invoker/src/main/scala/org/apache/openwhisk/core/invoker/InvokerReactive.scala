@@ -71,8 +71,6 @@ class InvokerReactive(
   implicit actorSystem: ActorSystem,
   logging: Logging) {
 
-  private val controlPeriod: Int = 10
-
   implicit val materializer: ActorMaterializer = ActorMaterializer()
   implicit val ec: ExecutionContext = actorSystem.dispatcher
   implicit val cfg: WhiskConfig = config
@@ -205,6 +203,7 @@ class InvokerReactive(
   private val rtMonitor =
     actorSystem.actorOf(ResponseTimeMonitor.props)
 
+  private val controlPeriod: Int = 10 * 1000
   private val rtPlanner =
     actorSystem.actorOf(PlannersController.props(controlPeriod, rtMonitor, pool))
 

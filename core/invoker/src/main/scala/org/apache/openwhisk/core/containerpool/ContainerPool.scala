@@ -100,6 +100,18 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
   private def handleActuation[A]() = {
     val capacity = poolConfig.userMemory.toMB
     decidedAllocation = calculateGreedyAllocation(capacity)
+    printAllocation(decidedAllocation)
+  }
+
+  private def printAllocation(allocation: Map[ExecutableWhiskAction, Float]) = {
+    var allocationMsg = ""
+    for((action, value) <- allocation){
+      allocationMsg += s"allocation for action ${action} is of ${value} CTNs"
+    }
+    logging.info(
+      this,
+      allocationMsg
+    )
   }
 
   private def calculateGreedyAllocation(capacity: Long): immutable.Map[ExecutableWhiskAction, Float] = {
@@ -121,19 +133,26 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
       allocation += action -> (actual - removed)
       allocatedCapacity += (actual - removed).toInt
     }
-    val toBeCreated = idealAllocation collect {
+
+    val toBeCreated = (idealAllocation -- toBeRemoved.keySet)
+    /*val toBeCreated = idealAllocation filter {
       case (action, ideal) =>
         getActualAllocationForAction(action) < ideal
-    }
-    for((action, ideal) <- toBeRemoved) {
+    }*/
+    for((action, ideal) <- toBeCreated) {
       val actual = getActualAllocationForAction(action)
       val availableCapacity = capacity - allocatedCapacity
       val toCreate = Math.min(availableCapacity, ideal - actual).toInt
-      var created = List.range(toCreate, 0).filter(n => {
+      List.range(toCreate, 0).filter(n => {
         hasPoolSpaceFor(busyPool ++ freePool, action.limits.memory.megabytes.MB * n)
-      }).head
-      allocation += action -> (actual + created)
-      allocatedCapacity += (actual + created).toInt
+      }).headOption match {
+        case Some(created) =>
+          allocation += action -> (actual + created)
+          allocatedCapacity += (actual + created).toInt
+        case None =>
+          allocation += action -> actual
+          allocatedCapacity += actual.toInt
+      }
     }
     allocation
   }
@@ -278,7 +297,7 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
               runBuffer = runBuffer.enqueue(r)
             } else{
               //TODO do not re-add to the first queue to give opportunity for other requests to be processed
-              //TODO ideally, should also move subsequent requests targeting the same action 
+              //TODO ideally, should also move subsequent requests targeting the same action
               secondRunBuffer = secondRunBuffer.enqueue(r)
             }
             // As this request is the first one in the buffer, try again to execute it.
