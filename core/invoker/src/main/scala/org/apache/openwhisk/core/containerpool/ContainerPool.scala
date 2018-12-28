@@ -192,7 +192,7 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
   private def isBellowLimit(action: ExecutableWhiskAction): Boolean = {
     idealAllocation.get(action) match {
       case Some(ideal) =>
-        getActualAllocationForAction(action) < ideal
+        ideal == 0 || getActualAllocationForAction(action) < ideal //TODO currently allowing to scale if ideal == 0
       case None =>
         true //TODO no ideal, any ideal?
     }

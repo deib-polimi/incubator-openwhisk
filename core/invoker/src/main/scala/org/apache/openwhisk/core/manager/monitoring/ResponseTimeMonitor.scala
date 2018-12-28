@@ -65,7 +65,7 @@ class ResponseTimeMonitor
       case Some((action, timeOfRequestArrival)) =>
         arrivalCount.get(action) match {
           case Some (currentCount) =>
-            val responseTime = timeOfResponseArrival - timeOfRequestArrival
+            val responseTime = (timeOfResponseArrival - timeOfRequestArrival).toFloat / 1000f //TODO try in seconds to check the CT behavior
             logging.info(
               this,
               s"handling response arrival for action ${action}), with RT = ${responseTime}ms"

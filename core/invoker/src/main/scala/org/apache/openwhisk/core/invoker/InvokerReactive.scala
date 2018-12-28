@@ -201,7 +201,7 @@ class InvokerReactive(
   private val rtMonitor =
     actorSystem.actorOf(ResponseTimeMonitor.props)
 
-  private val controlPeriod = 10.seconds
+  private val controlPeriod = 5.seconds
   private val rtPlanner =
     actorSystem.actorOf(PlannersController.props(rtMonitor, pool))
   private val rtPlannerScheduler = actorSystem.scheduler.schedule(controlPeriod, controlPeriod, rtPlanner, ControlPeriod())
